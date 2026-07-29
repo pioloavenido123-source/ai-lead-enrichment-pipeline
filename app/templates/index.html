@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lead Enrichment Pipeline — AI Company Research</title>
+<style>
+:root {
+  --bg: #0a0e1a;
+  --surface: #121829;
+  --surface-2: #1a2236;
+  --border: #243049;
+  --text: #e8eef7;
+  --text-muted: #8a99b5;
+  --accent: #4285F4;
+  --accent-hover: #5a98f7;
+  --green: #34A853;
+  --red: #EA4335;
+  --yellow: #FBBC05;
+  --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, #0a0e1a 0%, #121829 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 28px 24px;
+  text-align: center;
+}
+.header h1 {
+  font-size: 1.8rem;
+  background: linear-gradient(135deg, #4285F4, #34A853);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 6px;
+}
+.header p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+/* Container */
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+/* Search form */
+.search-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  margin-bottom: 28px;
+}
+.search-card h2 {
+  font-size: 1.1rem;
+  margin-bottom: 18px;
+  color: var(--text);
+}
+.form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.form-group {
+  flex: 1;
+  min-width: 200px;
+}
+.form-group label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.form-group input {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+.form-group input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.form-group input::placeholder { color: #556080; }
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--green));
+  color: white;
+  border: none;
+  padding: 12px 28px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+  align-self: flex-end;
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.btn-secondary:hover { border-color: var(--accent); }
+
+/* Loading state */
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+}
+.loading .spinner {
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 14px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading .steps {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  text-align: left;
+  max-width: 320px;
+  margin: 12px auto 0;
+}
+.loading .step {
+  padding: 4px 0;
+  opacity: 0.4;
+  transition: opacity 0.3s;
+}
+.loading .step.active { opacity: 1; color: var(--accent); }
+.loading .step.done { opacity: 0.7; }
+.loading .step.done::before { content: "✓ "; color: var(--green); }
+
+/* Error */
+.error-card {
+  background: rgba(234, 67, 53, 0.1);
+  border: 1px solid rgba(234, 67, 53, 0.3);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 24px;
+  color: var(--red);
+  font-size: 0.9rem;
+}
+
+/* Results */
+.result-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.result-header {
+  background: var(--surface-2);
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.result-header h3 {
+  font-size: 1.3rem;
+  color: var(--text);
+}
+.result-header .url-link {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+.result-header .url-link:hover { color: var(--accent); }
+.result-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.result-body { padding: 24px; }
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.field-group label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.field-group .value {
+  font-size: 0.95rem;
+  color: var(--text);
+}
+.field-group .value.not-found { color: #556080; font-style: italic; }
+
+/* Tags */
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.tag {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+.tag.green { border-color: rgba(52, 168, 83, 0.3); color: var(--green); }
+.tag.blue { border-color: rgba(66, 133, 244, 0.3); color: var(--accent); }
+
+/* Contacts */
+.contacts-section { margin-bottom: 24px; }
+.contacts-section h4 {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.contact-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.contact-avatar {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--green));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 1rem;
+  color: white;
+  flex-shrink: 0;
+}
+.contact-info { flex: 1; }
+.contact-info .name { font-weight: 600; font-size: 0.95rem; }
+.contact-info .title { color: var(--text-muted); font-size: 0.85rem; }
+.contact-info .email a, .contact-info .linkedin a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.82rem;
+}
+.contact-info .email a:hover, .contact-info .linkedin a:hover { text-decoration: underline; }
+
+/* Social links */
+.social-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.social-link {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: border-color 0.2s;
+}
+.social-link:hover { border-color: var(--accent); }
+
+/* Actions */
+.result-actions {
+  display: flex;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+
+/* History */
+.history-section { margin-top: 32px; }
+.history-section h3 {
+  font-size: 1rem;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+.history-list { display: flex; flex-direction: column; gap: 8px; }
+.history-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+}
+.history-item .name { color: var(--text); font-weight: 500; }
+.history-item .meta { color: var(--text-muted); font-size: 0.8rem; }
+
+/* Footer */
+.footer {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  border-top: 1px solid var(--border);
+  margin-top: 40px;
+}
+
+@media (max-width: 640px) {
+  .header h1 { font-size: 1.4rem; }
+  .form-row { flex-direction: column; }
+  .btn-primary { width: 100%; }
+  .result-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Lead Enrichment Pipeline</h1>
+  <p>Enter a company website — AI scrapes and extracts business intelligence automatically</p>
+</div>
+
+<div class="container">
+  <!-- Search form -->
+  <div class="search-card">
+    <h2>Research a Company</h2>
+    <form id="enrichForm" class="form-row">
+      <div class="form-group">
+        <label>Company Name (optional)</label>
+        <input type="text" id="companyName" placeholder="e.g. Acme Corp" autocomplete="off">
+      </div>
+      <div class="form-group" style="flex: 2;">
+        <label>Website URL *</label>
+        <input type="text" id="websiteUrl" placeholder="https://example.com" autocomplete="off" required>
+      </div>
+      <button type="submit" class="btn-primary" id="submitBtn">Enrich</button>
+    </form>
+  </div>
+
+  <!-- Error -->
+  <div id="errorBox"></div>
+
+  <!-- Loading -->
+  <div id="loadingBox" style="display:none;" class="loading">
+    <div class="spinner"></div>
+    <p>Researching company...</p>
+    <div class="steps">
+      <div class="step" id="step1">1. Fetching website content</div>
+      <div class="step" id="step2">2. Extracting text and metadata</div>
+      <div class="step" id="step3">3. AI analyzing business intelligence</div>
+      <div class="step" id="step4">4. Structuring results</div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="resultsBox"></div>
+
+  <!-- History -->
+  <div class="history-section" id="historySection" style="display:none;">
+    <h3>Recent Searches</h3>
+    <div class="history-list" id="historyList"></div>
+  </div>
+</div>
+
+<div class="footer">
+  Lead Enrichment Pipeline — Powered by AI web scraping &bull; Built by Piolo Rafael Avenido
+</div>
+
+<script>
+const form = document.getElementById('enrichForm');
+const submitBtn = document.getElementById('submitBtn');
+const loadingBox = document.getElementById('loadingBox');
+const errorBox = document.getElementById('errorBox');
+const resultsBox = document.getElementById('resultsBox');
+const historySection = document.getElementById('historySection');
+const historyList = document.getElementById('historyList');
+
+// Animate loading steps
+function animateSteps() {
+  const steps = ['step1', 'step2', 'step3', 'step4'];
+  let i = 0;
+  const interval = setInterval(() => {
+    if (i >= steps.length) { clearInterval(interval); return; }
+    if (i > 0) document.getElementById(steps[i-1]).classList.add('done');
+    document.getElementById(steps[i]).classList.add('active');
+    i++;
+  }, 1200);
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}
+
+function getInitials(name) {
+  if (!name || name === 'Not found') return '?';
+  return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function renderResult(result) {
+  const d = result.data;
+  const contacts = d.key_contacts || [];
+  const techStack = d.tech_stack || [];
+  const socialLinks = d.social_links || {};
+
+  let contactsHtml = '';
+  if (contacts.length > 0) {
+    contactsHtml = `
+      <div class="contacts-section">
+        <h4>Key Contacts (${contacts.length})</h4>
+        ${contacts.map(c => `
+          <div class="contact-card">
+            <div class="contact-avatar">${getInitials(c.name)}</div>
+            <div class="contact-info">
+              <div class="name">${escapeHtml(c.name)}</div>
+              <div class="title">${escapeHtml(c.title)}</div>
+              ${c.email ? `<div class="email"><a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a></div>` : ''}
+              ${c.linkedin ? `<div class="linkedin"><a href="${escapeHtml(c.linkedin)}" target="_blank">LinkedIn Profile</a></div>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  let socialHtml = '';
+  if (Object.keys(socialLinks).length > 0) {
+    socialHtml = `
+      <div class="social-links">
+        ${Object.entries(socialLinks).map(([name, url]) => `
+          <a href="${escapeHtml(url)}" target="_blank" class="social-link">${escapeHtml(name)}</a>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  let techHtml = '';
+  if (techStack.length > 0) {
+    techHtml = `
+      <div class="tag-row">
+        ${techStack.map(t => `<span class="tag blue">${escapeHtml(t)}</span>`).join('')}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="result-card">
+      <div class="result-header">
+        <div>
+          <h3>${escapeHtml(result.company_name)}</h3>
+          <a href="${escapeHtml(result.url)}" target="_blank" class="url-link">${escapeHtml(result.url)}</a>
+        </div>
+        <div class="result-meta">
+          <span>⏱ ${result.elapsed_seconds}s</span>
+          <span>📄 ${result.scraped_text_length} chars scraped</span>
+        </div>
+      </div>
+      <div class="result-body">
+        <div class="result-grid">
+          <div class="field-group">
+            <label>Industry</label>
+            <div class="value ${d.industry === 'Not found' ? 'not-found' : ''}">${escapeHtml(d.industry)}</div>
+          </div>
+          <div class="field-group">
+            <label>Company Size</label>
+            <div class="value ${d.company_size === 'Not found' ? 'not-found' : ''}">${escapeHtml(d.company_size)}</div>
+          </div>
+          <div class="field-group">
+            <label>Location</label>
+            <div class="value ${d.location === 'Not found' ? 'not-found' : ''}">${escapeHtml(d.location)}</div>
+          </div>
+          <div class="field-group">
+            <label>Target Market</label>
+            <div class="value ${d.target_market === 'Not found' ? 'not-found' : ''}">${escapeHtml(d.target_market)}</div>
+          </div>
+        </div>
+
+        <div class="field-group" style="margin-bottom: 24px;">
+          <label>Company Description</label>
+          <div class="value">${escapeHtml(d.company_description)}</div>
+        </div>
+
+        <div class="field-group" style="margin-bottom: 24px;">
+          <label>Value Proposition</label>
+          <div class="value">${escapeHtml(d.value_proposition)}</div>
+        </div>
+
+        ${techHtml}
+        ${socialHtml}
+        ${contactsHtml}
+      </div>
+      <div class="result-actions">
+        <button class="btn-secondary" onclick="exportCSV()">Export as CSV</button>
+        <button class="btn-secondary" onclick="exportJSON()">Export as JSON</button>
+      </div>
+    </div>
+  `;
+}
+
+let currentResult = null;
+
+function exportCSV() {
+  if (!currentResult) return;
+  const d = currentResult.data;
+  const rows = [
+    ['Field', 'Value'],
+    ['Company Name', currentResult.company_name],
+    ['Website', currentResult.url],
+    ['Industry', d.industry || ''],
+    ['Company Size', d.company_size || ''],
+    ['Location', d.location || ''],
+    ['Target Market', d.target_market || ''],
+    ['Description', d.company_description || ''],
+    ['Value Proposition', d.value_proposition || ''],
+    ['Tech Stack', (d.tech_stack || []).join('; ')],
+    ['Social Links', Object.entries(d.social_links || {}).map(([k,v]) => `${k}: ${v}`).join('; ')],
+    ['Contacts', (d.key_contacts || []).map(c => `${c.name} (${c.title}) ${c.email}`.trim()).join('; ')],
+  ];
+  const csv = rows.map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${currentResult.company_name.replace(/[^a-z0-9]/gi, '_')}_enrichment.csv`;
+  a.click();
+}
+
+function exportJSON() {
+  if (!currentResult) return;
+  const blob = new Blob([JSON.stringify(currentResult, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${currentResult.company_name.replace(/[^a-z0-9]/gi, '_')}_enrichment.json`;
+  a.click();
+}
+
+async function loadHistory() {
+  try {
+    const resp = await fetch('/api/history');
+    const data = await resp.json();
+    if (data.history && data.history.length > 0) {
+      historySection.style.display = 'block';
+      historyList.innerHTML = data.history.map(h => `
+        <div class="history-item">
+          <span class="name">${escapeHtml(h.company_name)}</span>
+          <span class="meta">${escapeHtml(h.industry)} &bull; ${h.elapsed_seconds}s &bull; ${escapeHtml(h.timestamp)}</span>
+        </div>
+      `).join('');
+    }
+  } catch (e) {}
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const companyName = document.getElementById('companyName').value.trim();
+  const websiteUrl = document.getElementById('websiteUrl').value.trim();
+
+  if (!websiteUrl) return;
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Working...';
+  errorBox.innerHTML = '';
+  resultsBox.innerHTML = '';
+  loadingBox.style.display = 'block';
+
+  // Reset and animate steps
+  ['step1','step2','step3','step4'].forEach(id => {
+    const el = document.getElementById(id);
+    el.className = 'step';
+  });
+  animateSteps();
+
+  try {
+    const resp = await fetch('/api/enrich', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_name: companyName, url: websiteUrl }),
+    });
+    const data = await resp.json();
+
+    loadingBox.style.display = 'none';
+
+    if (!resp.ok) {
+      errorBox.innerHTML = `<div class="error-card">${escapeHtml(data.error || 'Something went wrong')}</div>`;
+    } else {
+      currentResult = data;
+      resultsBox.innerHTML = renderResult(data);
+      loadHistory();
+    }
+  } catch (err) {
+    loadingBox.style.display = 'none';
+    errorBox.innerHTML = `<div class="error-card">Network error: ${escapeHtml(err.message)}</div>`;
+  }
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Enrich';
+});
+
+// Load history on page load
+loadHistory();
+</script>
+</body>
+</html>

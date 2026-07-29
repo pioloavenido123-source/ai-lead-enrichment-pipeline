@@ -1,0 +1,9 @@
+services:
+  lead-enrichment:
+    build: .
+    container_name: lead-enrichment
+    ports:
+      - "127.0.0.1:9018:9018"
+    env_file:
+      - .env
+    restart: unless-stopped
