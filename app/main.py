@@ -16,7 +16,12 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from pathlib import Path
 
-app = FastAPI(title="Lead Enrichment Pipeline")
+app = FastAPI(
+    title="Lead Enrichment Pipeline",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollama.com/v1")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
@@ -149,6 +154,9 @@ async def scrape_website(url: str, max_chars: int = 8000) -> dict:
             "meta_description": "",
             "social_links": {},
             "emails": [],
+            "footer_address": "",
+            "schema_location": "",
+            "schema_contacts": [],
             "_error": "Connection timed out — the website took too long to respond.",
         }
     except httpx.ConnectError:
@@ -158,14 +166,53 @@ async def scrape_website(url: str, max_chars: int = 8000) -> dict:
             "meta_description": "",
             "social_links": {},
             "emails": [],
+            "footer_address": "",
+            "schema_location": "",
+            "schema_contacts": [],
             "_error": f"Could not connect to {url}. Check if the URL is correct.",
         }
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # Remove script, style, nav, footer, header noise
-    for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "aside"]):
+    # Remove script, style, nav noise but KEEP footer/header/aside
+    # (footers often contain addresses, contact info, and social links)
+    for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
+
+    # Extract location from footer BEFORE removing any remaining noise
+    footer = soup.find("footer")
+    footer_text = ""
+    if footer:
+        footer_text = footer.get_text(strip=True)
+        # Look for address patterns in footer
+        addr_match = re.search(
+            r"(\d+\s+[A-Z][\w\s]+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Blvd|Boulevard|Way|Lane|Ln|Suite|Ste)[\w\s,#.]*[A-Z][a-z]+,\s*[A-Z][a-z]+)",
+            footer_text,
+        )
+        if addr_match:
+            footer_text = addr_match.group()
+        else:
+            footer_text = ""
+
+    # Also check for address in schema.org markup
+    schema_script = soup.find("script", attrs={"type": "application/ld+json"})
+    schema_location = ""
+    schema_contacts = []
+    if schema_script and schema_script.string:
+        try:
+            schema = json.loads(schema_script.string)
+            if isinstance(schema, dict):
+                addr = schema.get("address", {})
+                if isinstance(addr, dict):
+                    parts = [addr.get(k, "") for k in ["streetAddress", "addressLocality", "addressRegion", "postalCode", "addressCountry"]]
+                    schema_location = ", ".join(p for p in parts if p)
+                # Check for contact info
+                if schema.get("email"):
+                    schema_contacts.append({"name": "Not found", "title": "Not found", "email": schema["email"], "linkedin": ""})
+                if schema.get("telephone"):
+                    schema_contacts.append({"name": "Not found", "title": "Phone", "email": "", "linkedin": "", "phone": schema["telephone"]})
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     # Title
     title = soup.title.string.strip() if soup.title and soup.title.string else ""
@@ -212,6 +259,9 @@ async def scrape_website(url: str, max_chars: int = 8000) -> dict:
         "meta_description": meta_desc,
         "social_links": social_links,
         "emails": emails[:10],
+        "footer_address": footer_text,
+        "schema_location": schema_location,
+        "schema_contacts": schema_contacts,
     }
 
 
@@ -225,8 +275,8 @@ Given website text, extract:
 - company_description: 2-3 sentence summary of what the company does
 - industry: primary industry/sector
 - company_size: estimated size range (e.g. "1-10", "11-50", "51-200", "201-500", "500+")
-- location: headquarters location if findable, otherwise "Not found"
-- key_contacts: list of {name, title, email, linkedin} found on the page (empty list if none)
+- location: headquarters location if findable, otherwise "Not found". Look for addresses, city names, country names, or "headquartered in" phrases anywhere in the text including footers.
+- key_contacts: list of {name, title, email, linkedin} found on the page. Look for team pages, about pages, staff listings, leadership teams, founder/CEO names, and any contact information. Include anyone whose name and title appear on the page.
 - tech_stack: technologies mentioned on the site (frameworks, platforms, tools)
 - value_proposition: 1-sentence summary of their main offering
 - target_market: who they sell to (B2B, B2C, enterprise, SMB, etc.)
@@ -236,6 +286,7 @@ Rules:
 - If something is not found, use "Not found" or an empty list.
 - Emails must be actual email addresses found in the text.
 - Names must be actual names found in the text (e.g. from team/about pages).
+- For location, check the entire text including any address-like strings, city names, or country references.
 - Return ONLY valid JSON, no markdown, no explanations.
 
 Return this JSON structure:
@@ -338,6 +389,7 @@ async def extract_company_info(
 # API endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/health")
 @app.get("/api/health")
 async def health():
     return {
@@ -408,7 +460,7 @@ async def enrich_company(request: Request):
 
         elapsed = round(time.time() - start_time, 1)
 
-        # Merge scraped data (emails, social links) with AI result
+        # Merge scraped data (emails, social links, location, contacts) with AI result
         if isinstance(ai_result, dict) and "error" not in ai_result:
             # Add scraped emails if AI didn't find them
             if not ai_result.get("key_contacts"):
@@ -421,6 +473,16 @@ async def enrich_company(request: Request):
                         "email": email,
                         "linkedin": "",
                     })
+            # Add schema contacts if available
+            if scraped.get("schema_contacts"):
+                ai_result["key_contacts"].extend(scraped["schema_contacts"])
+
+            # Fill in location from schema or footer if AI returned "Not found"
+            if ai_result.get("location") in (None, "", "Not found", "not found"):
+                if scraped.get("schema_location"):
+                    ai_result["location"] = scraped["schema_location"]
+                elif scraped.get("footer_address"):
+                    ai_result["location"] = scraped["footer_address"]
 
             # Ensure social links are included
             ai_result["social_links"] = scraped.get("social_links", {})
@@ -541,6 +603,13 @@ async def batch_enrich(request: Request):
             if isinstance(ai_result, dict) and "error" not in ai_result:
                 if not ai_result.get("key_contacts"):
                     ai_result["key_contacts"] = []
+                if scraped.get("schema_contacts"):
+                    ai_result["key_contacts"].extend(scraped["schema_contacts"])
+                if ai_result.get("location") in (None, "", "Not found", "not found"):
+                    if scraped.get("schema_location"):
+                        ai_result["location"] = scraped["schema_location"]
+                    elif scraped.get("footer_address"):
+                        ai_result["location"] = scraped["footer_address"]
                 ai_result["social_links"] = scraped.get("social_links", {})
                 ai_result["scraped_emails"] = scraped.get("emails", [])
 
@@ -642,6 +711,13 @@ async def batch_csv_enrich(file: UploadFile = File(...)):
             if isinstance(ai_result, dict) and "error" not in ai_result:
                 if not ai_result.get("key_contacts"):
                     ai_result["key_contacts"] = []
+                if scraped.get("schema_contacts"):
+                    ai_result["key_contacts"].extend(scraped["schema_contacts"])
+                if ai_result.get("location") in (None, "", "Not found", "not found"):
+                    if scraped.get("schema_location"):
+                        ai_result["location"] = scraped["schema_location"]
+                    elif scraped.get("footer_address"):
+                        ai_result["location"] = scraped["footer_address"]
                 ai_result["social_links"] = scraped.get("social_links", {})
                 ai_result["scraped_emails"] = scraped.get("emails", [])
 
