@@ -1,6 +1,7 @@
 """
 Lead Enrichment Pipeline — AI-powered company research tool.
 Scrapes a company website, uses LLM to extract structured business intelligence.
+Features: caching, batch CSV processing, rate limiting, better error handling.
 """
 import os
 import re
@@ -8,10 +9,11 @@ import json
 import time
 import httpx
 import asyncio
+import sqlite3
+from collections import defaultdict, deque
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 app = FastAPI(title="Lead Enrichment Pipeline")
@@ -22,6 +24,63 @@ MODEL = os.getenv("MODEL", "deepseek-v4-flash")
 
 # In-memory search history (most recent first, max 20)
 search_history: list[dict] = []
+
+# ---------------------------------------------------------------------------
+# SQLite cache — persists enrichment results across restarts
+# ---------------------------------------------------------------------------
+CACHE_DB = Path(__file__).parent / "cache.db"
+
+def init_cache():
+    conn = sqlite3.connect(str(CACHE_DB))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS enrichment_cache (
+            url TEXT PRIMARY KEY,
+            result_json TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def get_cached(url: str) -> dict | None:
+    conn = sqlite3.connect(str(CACHE_DB))
+    row = conn.execute(
+        "SELECT result_json FROM enrichment_cache WHERE url = ?",
+        (url,)
+    ).fetchone()
+    conn.close()
+    if row:
+        return json.loads(row[0])
+    return None
+
+def set_cached(url: str, result: dict):
+    conn = sqlite3.connect(str(CACHE_DB))
+    conn.execute(
+        "INSERT OR REPLACE INTO enrichment_cache (url, result_json, created_at) VALUES (?, ?, ?)",
+        (url, json.dumps(result), time.time())
+    )
+    conn.commit()
+    conn.close()
+
+init_cache()
+
+# ---------------------------------------------------------------------------
+# Rate limiting — max 10 requests per minute per IP
+# ---------------------------------------------------------------------------
+RATE_LIMIT = 10  # requests per minute
+RATE_WINDOW = 60  # seconds
+rate_tracker: dict[str, deque] = defaultdict(lambda: deque())
+
+def check_rate_limit(ip: str) -> bool:
+    now = time.time()
+    tracker = rate_tracker[ip]
+    # Remove old entries
+    while tracker and now - tracker[0] > RATE_WINDOW:
+        tracker.popleft()
+    if len(tracker) >= RATE_LIMIT:
+        return False
+    tracker.append(now)
+    return True
 
 # ---------------------------------------------------------------------------
 # Web scraping
@@ -57,14 +116,50 @@ async def scrape_website(url: str, max_chars: int = 8000) -> dict:
         )
     }
 
-    async with httpx.AsyncClient(
-        timeout=20.0,
-        follow_redirects=True,
-        verify=False,
-    ) as client:
-        resp = await client.get(url, headers=headers)
+    try:
+        async with httpx.AsyncClient(
+            timeout=20.0,
+            follow_redirects=True,
+            verify=False,
+        ) as client:
+            resp = await client.get(url, headers=headers)
+
+        # Check for Cloudflare/bot protection
+        if resp.status_code == 403:
+            cf_ray = resp.headers.get("cf-ray", "")
+            if cf_ray:
+                raise httpx.HTTPStatusError(
+                    "CLOUDFLARE_BLOCKED",
+                    request=resp.request,
+                    response=resp,
+                )
+            raise httpx.HTTPStatusError(
+                "ACCESS_DENIED",
+                request=resp.request,
+                response=resp,
+            )
+
         resp.raise_for_status()
         html = resp.text
+
+    except httpx.ConnectTimeout:
+        return {
+            "text": "",
+            "title": "",
+            "meta_description": "",
+            "social_links": {},
+            "emails": [],
+            "_error": "Connection timed out — the website took too long to respond.",
+        }
+    except httpx.ConnectError:
+        return {
+            "text": "",
+            "title": "",
+            "meta_description": "",
+            "social_links": {},
+            "emails": [],
+            "_error": f"Could not connect to {url}. Check if the URL is correct.",
+        }
 
     soup = BeautifulSoup(html, "html.parser")
 
@@ -186,7 +281,7 @@ async def extract_company_info(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        "max_tokens": 1000,
+        "max_tokens": 2000,
         "stream": False,
     }
 
@@ -206,12 +301,22 @@ async def extract_company_info(
 
     content = data["choices"][0]["message"]["content"]
 
+    # Some models put the response in a "reasoning" field
+    if not content and "reasoning" in data["choices"][0]["message"]:
+        content = data["choices"][0]["message"]["reasoning"]
+
     # Strip markdown wrappers if present
     content = content.strip()
     if content.startswith("```"):
         content = re.sub(r"^```(?:json)?\s*", "", content)
         content = re.sub(r"\s*```$", "", content)
         content = content.strip()
+
+    # Remove any leading/trailing non-JSON text
+    first_brace = content.find("{")
+    last_brace = content.rfind("}")
+    if first_brace != -1 and last_brace != -1:
+        content = content[first_brace:last_brace + 1]
 
     try:
         parsed = json.loads(content)
@@ -235,7 +340,13 @@ async def extract_company_info(
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "model": MODEL}
+    return {
+        "status": "ok",
+        "model": MODEL,
+        "features": ["caching", "batch-csv", "rate-limiting"],
+        "rate_limit": f"{RATE_LIMIT} requests per {RATE_WINDOW}s",
+        "max_batch_size": 20,
+    }
 
 
 @app.get("/api/history")
@@ -245,6 +356,14 @@ async def history():
 
 @app.post("/api/enrich")
 async def enrich_company(request: Request):
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        return JSONResponse(
+            {"error": "Rate limit exceeded. Maximum 10 requests per minute. Please wait and try again."},
+            status_code=429,
+        )
+
     body = await request.json()
     company_name = body.get("company_name", "").strip()
     url = body.get("url", "").strip()
@@ -259,15 +378,28 @@ async def enrich_company(request: Request):
     if not url.startswith("http"):
         url = "https://" + url
 
+    # Check cache first
+    cached = get_cached(url)
+    if cached:
+        cached["cached"] = True
+        return JSONResponse(cached)
+
     start_time = time.time()
 
     try:
         # Step 1: Scrape website
         scraped = await scrape_website(url)
 
+        # Check for scrape errors
+        if scraped.get("_error"):
+            return JSONResponse(
+                {"error": scraped["_error"]},
+                status_code=422,
+            )
+
         if len(scraped["text"]) < 50:
             return JSONResponse(
-                {"error": "Could not extract enough text from the website. The site may be JavaScript-rendered or blocked."},
+                {"error": "Could not extract enough text from the website. The site may be JavaScript-rendered, behind a login wall, or blocking automated access."},
                 status_code=422,
             )
 
@@ -303,7 +435,11 @@ async def enrich_company(request: Request):
             "data": ai_result,
             "elapsed_seconds": elapsed,
             "scraped_text_length": len(scraped["text"]),
+            "cached": False,
         }
+
+        # Cache the result
+        set_cached(url, result)
 
         # Add to history (keep most recent 20)
         search_history.insert(0, {
@@ -319,6 +455,12 @@ async def enrich_company(request: Request):
         return JSONResponse(result)
 
     except httpx.HTTPStatusError as e:
+        error_msg = str(e)
+        if "CLOUDFLARE_BLOCKED" in error_msg:
+            return JSONResponse(
+                {"error": f"This website is protected by Cloudflare and blocks automated scraping. Try a different URL or check the company manually."},
+                status_code=403,
+            )
         return JSONResponse(
             {"error": f"Website returned HTTP {e.response.status_code}"},
             status_code=502,
@@ -333,6 +475,203 @@ async def enrich_company(request: Request):
             {"error": f"An error occurred: {str(e)[:200]}"},
             status_code=500,
         )
+
+
+# ---------------------------------------------------------------------------
+# Batch CSV processing
+# ---------------------------------------------------------------------------
+
+@app.post("/api/batch")
+async def batch_enrich(request: Request):
+    """Process multiple company URLs from a JSON list."""
+    # Rate limiting (batch counts as 1 request for rate limit, but max 20 URLs)
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        return JSONResponse(
+            {"error": "Rate limit exceeded. Maximum 10 requests per minute."},
+            status_code=429,
+        )
+
+    body = await request.json()
+    urls = body.get("urls", [])
+
+    if not urls or not isinstance(urls, list):
+        return JSONResponse(
+            {"error": "Please provide a list of URLs in the 'urls' field"},
+            status_code=400,
+        )
+
+    if len(urls) > 20:
+        return JSONResponse(
+            {"error": "Maximum 20 URLs per batch request"},
+            status_code=400,
+        )
+
+    results = []
+    errors = []
+
+    for i, url in enumerate(urls):
+        url = url.strip()
+        if not url:
+            continue
+        if not url.startswith("http"):
+            url = "https://" + url
+
+        # Check cache
+        cached = get_cached(url)
+        if cached:
+            cached["cached"] = True
+            results.append(cached)
+            continue
+
+        try:
+            scraped = await scrape_website(url)
+
+            if scraped.get("_error"):
+                errors.append({"url": url, "error": scraped["_error"]})
+                continue
+
+            if len(scraped["text"]) < 50:
+                errors.append({"url": url, "error": "Not enough text extracted from website"})
+                continue
+
+            ai_result = await extract_company_info(url, scraped)
+            elapsed = 0  # batch doesn't track individual time
+
+            if isinstance(ai_result, dict) and "error" not in ai_result:
+                if not ai_result.get("key_contacts"):
+                    ai_result["key_contacts"] = []
+                ai_result["social_links"] = scraped.get("social_links", {})
+                ai_result["scraped_emails"] = scraped.get("emails", [])
+
+            result = {
+                "company_name": scraped.get("title", url),
+                "url": url,
+                "data": ai_result,
+                "elapsed_seconds": elapsed,
+                "scraped_text_length": len(scraped["text"]),
+                "cached": False,
+            }
+
+            set_cached(url, result)
+            results.append(result)
+
+        except httpx.HTTPStatusError as e:
+            if "CLOUDFLARE_BLOCKED" in str(e):
+                errors.append({"url": url, "error": "Website protected by Cloudflare — blocks automated scraping"})
+            else:
+                errors.append({"url": url, "error": f"Website returned HTTP {e.response.status_code}"})
+        except Exception as e:
+            errors.append({"url": url, "error": str(e)[:200]})
+
+    return JSONResponse({
+        "total": len(urls),
+        "successful": len(results),
+        "failed": len(errors),
+        "results": results,
+        "errors": errors,
+    })
+
+
+@app.post("/api/batch-csv")
+async def batch_csv_enrich(file: UploadFile = File(...)):
+    """Upload a CSV file with company URLs, process them all."""
+    content = await file.read()
+    text = content.decode("utf-8", errors="replace")
+
+    # Parse CSV — expect a column with URLs (first column or a "url"/"website" column)
+    lines = text.strip().split("\n")
+    if len(lines) < 2:
+        return JSONResponse(
+            {"error": "CSV must have a header row and at least one data row"},
+            status_code=400,
+        )
+
+    # Find the URL column
+    header = lines[0].lower().strip()
+    url_col_idx = 0
+    for idx, col in enumerate(header.split(",")):
+        if "url" in col or "website" in col or "site" in col:
+            url_col_idx = idx
+            break
+
+    urls = []
+    for line in lines[1:]:
+        cols = line.split(",")
+        if len(cols) > url_col_idx:
+            url = cols[url_col_idx].strip().strip('"').strip("'")
+            if url:
+                urls.append(url)
+
+    if not urls:
+        return JSONResponse(
+            {"error": "No URLs found in the CSV"},
+            status_code=400,
+        )
+
+    if len(urls) > 20:
+        urls = urls[:20]
+
+    # Process each URL
+    results = []
+    errors = []
+
+    for url in urls:
+        if not url.startswith("http"):
+            url = "https://" + url
+
+        cached = get_cached(url)
+        if cached:
+            cached["cached"] = True
+            results.append(cached)
+            continue
+
+        try:
+            scraped = await scrape_website(url)
+
+            if scraped.get("_error"):
+                errors.append({"url": url, "error": scraped["_error"]})
+                continue
+
+            if len(scraped["text"]) < 50:
+                errors.append({"url": url, "error": "Not enough text extracted"})
+                continue
+
+            ai_result = await extract_company_info(url, scraped)
+
+            if isinstance(ai_result, dict) and "error" not in ai_result:
+                if not ai_result.get("key_contacts"):
+                    ai_result["key_contacts"] = []
+                ai_result["social_links"] = scraped.get("social_links", {})
+                ai_result["scraped_emails"] = scraped.get("emails", [])
+
+            result = {
+                "company_name": scraped.get("title", url),
+                "url": url,
+                "data": ai_result,
+                "elapsed_seconds": 0,
+                "scraped_text_length": len(scraped["text"]),
+                "cached": False,
+            }
+
+            set_cached(url, result)
+            results.append(result)
+
+        except httpx.HTTPStatusError as e:
+            if "CLOUDFLARE_BLOCKED" in str(e):
+                errors.append({"url": url, "error": "Cloudflare blocked"})
+            else:
+                errors.append({"url": url, "error": f"HTTP {e.response.status_code}"})
+        except Exception as e:
+            errors.append({"url": url, "error": str(e)[:200]})
+
+    return JSONResponse({
+        "total": len(urls),
+        "successful": len(results),
+        "failed": len(errors),
+        "results": results,
+        "errors": errors,
+    })
 
 
 # ---------------------------------------------------------------------------

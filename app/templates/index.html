@@ -376,6 +376,23 @@ body {
     </form>
   </div>
 
+  <!-- Batch CSV upload -->
+  <div class="search-card" style="margin-top: -16px;">
+    <h2 style="margin-bottom: 8px;">Batch Process (CSV)</h2>
+    <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 14px;">
+      Upload a CSV with a column named "url", "website", or "site" (max 20 companies per batch).
+      <a href="#" id="downloadTemplate" style="color: var(--accent); text-decoration: none;">Download template</a>
+    </p>
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+      <label for="csvFile" class="btn-secondary" style="cursor: pointer; display: inline-block;">
+        Choose CSV File
+      </label>
+      <input type="file" id="csvFile" accept=".csv" style="position: absolute; opacity: 0; width: 1px; height: 1px;">
+      <span id="csvFileName" style="color: var(--text-muted); font-size: 0.85rem;">No file selected</span>
+      <button id="batchBtn" class="btn-primary" disabled style="opacity: 0.5;">Process Batch</button>
+    </div>
+  </div>
+
   <!-- Error -->
   <div id="errorBox"></div>
 
@@ -493,6 +510,7 @@ function renderResult(result) {
         <div class="result-meta">
           <span>⏱ ${result.elapsed_seconds}s</span>
           <span>📄 ${result.scraped_text_length} chars scraped</span>
+          ${result.cached ? '<span style="color: var(--yellow);">⚡ Cached</span>' : ''}
         </div>
       </div>
       <div class="result-body">
@@ -637,6 +655,185 @@ form.addEventListener('submit', async (e) => {
 
 // Load history on page load
 loadHistory();
+
+// ---------------------------------------------------------------------------
+// Batch CSV processing
+// ---------------------------------------------------------------------------
+const csvFileInput = document.getElementById('csvFile');
+const csvFileName = document.getElementById('csvFileName');
+const batchBtn = document.getElementById('batchBtn');
+const downloadTemplate = document.getElementById('downloadTemplate');
+let selectedCsvFile = null;
+
+// Download CSV template
+downloadTemplate.addEventListener('click', (e) => {
+  e.preventDefault();
+  const csv = 'url,company_name\nhttps://stripe.com,Stripe\nhttps://linear.app,Linear\nhttps://vercel.com,Vercel\n';
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'batch_template.csv';
+  a.click();
+});
+
+// File selection
+csvFileInput.addEventListener('change', (e) => {
+  selectedCsvFile = e.target.files[0];
+  if (selectedCsvFile) {
+    csvFileName.textContent = selectedCsvFile.name;
+    batchBtn.disabled = false;
+    batchBtn.style.opacity = '1';
+  } else {
+    csvFileName.textContent = 'No file selected';
+    batchBtn.disabled = true;
+    batchBtn.style.opacity = '0.5';
+  }
+});
+
+// Process batch
+batchBtn.addEventListener('click', async () => {
+  if (!selectedCsvFile) return;
+
+  batchBtn.disabled = true;
+  batchBtn.textContent = 'Processing...';
+  batchBtn.style.opacity = '0.5';
+  errorBox.innerHTML = '';
+  resultsBox.innerHTML = '';
+
+  // Show batch loading
+  loadingBox.style.display = 'block';
+  document.querySelector('.loading p').textContent = `Processing batch of companies...`;
+
+  try {
+    const formData = new FormData();
+    formData.append('file', selectedCsvFile);
+
+    const resp = await fetch('/api/batch-csv', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const data = await resp.json();
+    loadingBox.style.display = 'none';
+
+    if (!resp.ok) {
+      errorBox.innerHTML = `<div class="error-card">${escapeHtml(data.error || 'Batch processing failed')}</div>`;
+    } else {
+      // Render batch results
+      let batchHtml = `
+        <div class="result-card">
+          <div class="result-header">
+            <div>
+              <h3>Batch Results</h3>
+              <span style="color: var(--text-muted); font-size: 0.85rem;">
+                ${data.successful} succeeded, ${data.failed} failed out of ${data.total} total
+              </span>
+            </div>
+          </div>
+          <div class="result-body">
+      `;
+
+      // Success summary
+      if (data.results.length > 0) {
+        batchHtml += `
+          <div class="tag-row" style="margin-bottom: 20px;">
+            <span class="tag green">${data.successful} Successful</span>
+            ${data.failed > 0 ? `<span class="tag" style="border-color: rgba(234,67,53,0.3); color: var(--red);">${data.failed} Failed</span>` : ''}
+            <span class="tag blue">${data.results.filter(r => r.cached).length} Cached</span>
+          </div>
+        `;
+
+        // Table of results
+        batchHtml += `
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 20px;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);">
+                <th style="text-align: left; padding: 8px;">Company</th>
+                <th style="text-align: left; padding: 8px;">Industry</th>
+                <th style="text-align: left; padding: 8px;">Size</th>
+                <th style="text-align: left; padding: 8px;">Location</th>
+                <th style="text-align: left; padding: 8px;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        data.results.forEach(r => {
+          const d = r.data || {};
+          batchHtml += `
+            <tr style="border-bottom: 1px solid var(--surface-2);">
+              <td style="padding: 8px;"><a href="${escapeHtml(r.url)}" target="_blank" style="color: var(--accent); text-decoration: none;">${escapeHtml(r.company_name)}</a></td>
+              <td style="padding: 8px; color: var(--text-muted);">${escapeHtml(d.industry || 'N/A')}</td>
+              <td style="padding: 8px; color: var(--text-muted);">${escapeHtml(d.company_size || 'N/A')}</td>
+              <td style="padding: 8px; color: var(--text-muted);">${escapeHtml(d.location || 'N/A')}</td>
+              <td style="padding: 8px;">${r.cached ? '<span style="color: var(--yellow);">Cached</span>' : '<span style="color: var(--green);">Fresh</span>'}</td>
+            </tr>
+          `;
+        });
+
+        batchHtml += '</tbody></table>';
+
+        // Export all as CSV
+        batchHtml += `
+          <button class="btn-secondary" onclick="exportBatchCSV(${JSON.stringify(data.results).replace(/"/g, '&quot;')})">
+            Export All as CSV
+          </button>
+        `;
+      }
+
+      // Errors
+      if (data.errors.length > 0) {
+        batchHtml += `
+          <div style="margin-top: 16px;">
+            <h4 style="color: var(--red); font-size: 0.85rem; margin-bottom: 10px;">Errors (${data.errors.length})</h4>
+            ${data.errors.map(e => `
+              <div style="background: rgba(234,67,53,0.08); border: 1px solid rgba(234,67,53,0.2); border-radius: 6px; padding: 10px; margin-bottom: 6px; font-size: 0.82rem;">
+                <strong>${escapeHtml(e.url)}</strong>: ${escapeHtml(e.error)}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      batchHtml += '</div></div>';
+      resultsBox.innerHTML = batchHtml;
+      loadHistory();
+    }
+  } catch (err) {
+    loadingBox.style.display = 'none';
+    errorBox.innerHTML = `<div class="error-card">Network error: ${escapeHtml(err.message)}</div>`;
+  }
+
+  batchBtn.disabled = false;
+  batchBtn.textContent = 'Process Batch';
+  batchBtn.style.opacity = '1';
+});
+
+function exportBatchCSV(results) {
+  const rows = [['Company Name', 'Website', 'Industry', 'Company Size', 'Location', 'Target Market', 'Description', 'Value Proposition', 'Tech Stack', 'Social Links', 'Contacts']];
+  results.forEach(r => {
+    const d = r.data || {};
+    rows.push([
+      r.company_name || '',
+      r.url || '',
+      d.industry || '',
+      d.company_size || '',
+      d.location || '',
+      d.target_market || '',
+      d.company_description || '',
+      d.value_proposition || '',
+      (d.tech_stack || []).join('; '),
+      Object.entries(d.social_links || {}).map(([k,v]) => `${k}: ${v}`).join('; '),
+      (d.key_contacts || []).map(c => `${c.name || ''} (${c.title || ''}) ${c.email || ''}`.trim()).join('; '),
+    ]);
+  });
+  const csv = rows.map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'batch_enrichment_results.csv';
+  a.click();
+}
 </script>
 </body>
 </html>
