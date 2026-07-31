@@ -775,9 +775,14 @@ batchBtn.addEventListener('click', async () => {
 
         batchHtml += '</tbody></table>';
 
-        // Export buttons
+        // Selected count display + Export buttons
         batchHtml += `
-          <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; margin-bottom: 8px;">
+            <span id="selectedCount" style="font-size: 0.85rem; color: var(--text-muted); padding: 4px 12px; background: var(--surface-2); border-radius: 20px; border: 1px solid var(--border);">
+              0 selected
+            </span>
+          </div>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
             <button class="btn-secondary" onclick="exportBatchCSV(${JSON.stringify(data.results).replace(/"/g, '&quot;')})">
               Export All as CSV
             </button>
@@ -919,21 +924,9 @@ function deleteSelectedLeads(results) {
       if (rows[idx]) rows[idx].remove();
     });
   }
-  // Update the select-all checkbox state
-  const selectAllCb = document.getElementById('selectAllLeads');
-  if (selectAllCb) {
-    const remainingCheckboxes = document.querySelectorAll('.lead-checkbox');
-    selectAllCb.checked = remainingCheckboxes.length > 0 && Array.from(remainingCheckboxes).every(cb => cb.checked);
-  }
-  // Update summary counts if present
-  const summaryTags = document.querySelectorAll('#resultsBox .tag');
-  if (summaryTags.length > 0 && summaryTags[0]) {
-    // Update the "Successful" count tag
-    const successTag = Array.from(summaryTags).find(t => t.textContent.includes('Successful'));
-    if (successTag) {
-      successTag.textContent = `${remaining.length} Successful`;
-    }
-  }
+  // Update select-all and count after deletion
+  updateSelectedCount();
+
   // Disable delete button if no rows remain
   const remainingCheckboxes = document.querySelectorAll('.lead-checkbox');
   if (remainingCheckboxes.length === 0) {
@@ -951,12 +944,31 @@ function deleteSelectedLeads(results) {
   }
 }
 
-// Select All toggle
+// Update selected count display
+function updateSelectedCount() {
+  const checkboxes = document.querySelectorAll('.lead-checkbox');
+  const checked = Array.from(checkboxes).filter(cb => cb.checked).length;
+  const countEl = document.getElementById('selectedCount');
+  if (countEl) {
+    countEl.textContent = `${checked} selected`;
+    countEl.style.color = checked === 0 ? 'var(--red)' : 'var(--text-muted)';
+  }
+  // Update Select All checkbox state
+  const selectAllCb = document.getElementById('selectAllLeads');
+  if (selectAllCb) {
+    selectAllCb.checked = checkboxes.length > 0 && checked === checkboxes.length;
+  }
+}
+
+// Select All toggle + individual checkbox changes
 document.addEventListener('change', function(e) {
   if (e.target && e.target.id === 'selectAllLeads') {
     document.querySelectorAll('.lead-checkbox').forEach(cb => {
       cb.checked = e.target.checked;
     });
+    updateSelectedCount();
+  } else if (e.target && e.target.classList && e.target.classList.contains('lead-checkbox')) {
+    updateSelectedCount();
   }
 });
 </script>
