@@ -784,6 +784,9 @@ batchBtn.addEventListener('click', async () => {
             <button class="btn-secondary" onclick="exportSelectedCSV(${JSON.stringify(data.results).replace(/"/g, '&quot;')})" id="exportSelectedBtn">
               Export Selected as CSV
             </button>
+            <button class="btn-secondary" onclick="deleteSelectedLeads(${JSON.stringify(data.results).replace(/"/g, '&quot;')})" id="deleteSelectedBtn" style="border-color: rgba(234,67,53,0.4); color: var(--red);">
+              Delete Selected
+            </button>
           </div>
         `;
       }
@@ -882,6 +885,70 @@ function exportSelectedCSV(results) {
   a.href = URL.createObjectURL(blob);
   a.download = `selected_leads_${selected.length}.csv`;
   a.click();
+}
+
+function deleteSelectedLeads(results) {
+  const checkboxes = document.querySelectorAll('.lead-checkbox');
+  const selected = [];
+  const selectedIndices = [];
+  checkboxes.forEach(cb => {
+    if (cb.checked) {
+      const idx = parseInt(cb.dataset.index);
+      if (results[idx]) {
+        selected.push(results[idx]);
+        selectedIndices.push(idx);
+      }
+    }
+  });
+  if (selected.length === 0) {
+    alert('No leads selected. Check at least one row to delete.');
+    return;
+  }
+  const names = selected.map(r => r.company_name || r.url).join(', ');
+  if (!confirm(`Delete ${selected.length} lead${selected.length > 1 ? 's' : ''}?\n\n${names}\n\nThis will remove the selected rows from the results table. This action cannot be undone.`)) {
+    return;
+  }
+  // Remove selected rows from the table
+  const remaining = results.filter((_, i) => !selectedIndices.includes(i));
+  // Re-render the results table with remaining leads
+  const tbody = document.querySelector('#resultsBox table tbody');
+  if (tbody) {
+    const rows = tbody.querySelectorAll('tr');
+    // Remove rows in reverse order to avoid index shifting
+    selectedIndices.sort((a, b) => b - a).forEach(idx => {
+      if (rows[idx]) rows[idx].remove();
+    });
+  }
+  // Update the select-all checkbox state
+  const selectAllCb = document.getElementById('selectAllLeads');
+  if (selectAllCb) {
+    const remainingCheckboxes = document.querySelectorAll('.lead-checkbox');
+    selectAllCb.checked = remainingCheckboxes.length > 0 && Array.from(remainingCheckboxes).every(cb => cb.checked);
+  }
+  // Update summary counts if present
+  const summaryTags = document.querySelectorAll('#resultsBox .tag');
+  if (summaryTags.length > 0 && summaryTags[0]) {
+    // Update the "Successful" count tag
+    const successTag = Array.from(summaryTags).find(t => t.textContent.includes('Successful'));
+    if (successTag) {
+      successTag.textContent = `${remaining.length} Successful`;
+    }
+  }
+  // Disable delete button if no rows remain
+  const remainingCheckboxes = document.querySelectorAll('.lead-checkbox');
+  if (remainingCheckboxes.length === 0) {
+    const deleteBtn = document.getElementById('deleteSelectedBtn');
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
+      deleteBtn.style.opacity = '0.5';
+      deleteBtn.textContent = 'No Leads to Delete';
+    }
+    const exportBtn = document.getElementById('exportSelectedBtn');
+    if (exportBtn) {
+      exportBtn.disabled = true;
+      exportBtn.style.opacity = '0.5';
+    }
+  }
 }
 
 // Select All toggle
