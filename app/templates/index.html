@@ -855,6 +855,10 @@ function exportSelectedCSV(results) {
     alert('No leads selected. Check at least one row to export.');
     return;
   }
+  const names = selected.map(r => r.company_name || r.url).join(', ');
+  if (!confirm(`Export ${selected.length} lead${selected.length > 1 ? 's' : ''} as CSV?\n\n${names}`)) {
+    return;
+  }
   const rows = [['Company Name', 'Website', 'Industry', 'Company Size', 'Location', 'Target Market', 'Description', 'Value Proposition', 'Tech Stack', 'Social Links', 'Contacts']];
   selected.forEach(r => {
     const d = r.data || {};
