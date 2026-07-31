@@ -748,6 +748,7 @@ batchBtn.addEventListener('click', async () => {
           <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 20px;">
             <thead>
               <tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);">
+                <th style="padding: 8px; width: 40px;"><input type="checkbox" id="selectAllLeads" checked style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);"></th>
                 <th style="text-align: left; padding: 8px;">Company</th>
                 <th style="text-align: left; padding: 8px;">Industry</th>
                 <th style="text-align: left; padding: 8px;">Size</th>
@@ -758,10 +759,11 @@ batchBtn.addEventListener('click', async () => {
             <tbody>
         `;
 
-        data.results.forEach(r => {
+        data.results.forEach((r, i) => {
           const d = r.data || {};
           batchHtml += `
             <tr style="border-bottom: 1px solid var(--surface-2);">
+              <td style="padding: 8px;"><input type="checkbox" class="lead-checkbox" data-index="${i}" checked style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);"></td>
               <td style="padding: 8px;"><a href="${escapeHtml(r.url)}" target="_blank" style="color: var(--accent); text-decoration: none;">${escapeHtml(r.company_name)}</a></td>
               <td style="padding: 8px; color: var(--text-muted);">${escapeHtml(d.industry || 'N/A')}</td>
               <td style="padding: 8px; color: var(--text-muted);">${escapeHtml(d.company_size || 'N/A')}</td>
@@ -773,11 +775,16 @@ batchBtn.addEventListener('click', async () => {
 
         batchHtml += '</tbody></table>';
 
-        // Export all as CSV
+        // Export buttons
         batchHtml += `
-          <button class="btn-secondary" onclick="exportBatchCSV(${JSON.stringify(data.results).replace(/"/g, '&quot;')})">
-            Export All as CSV
-          </button>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;">
+            <button class="btn-secondary" onclick="exportBatchCSV(${JSON.stringify(data.results).replace(/"/g, '&quot;')})">
+              Export All as CSV
+            </button>
+            <button class="btn-secondary" onclick="exportSelectedCSV(${JSON.stringify(data.results).replace(/"/g, '&quot;')})" id="exportSelectedBtn">
+              Export Selected as CSV
+            </button>
+          </div>
         `;
       }
 
@@ -834,6 +841,53 @@ function exportBatchCSV(results) {
   a.download = 'batch_enrichment_results.csv';
   a.click();
 }
+
+function exportSelectedCSV(results) {
+  const checkboxes = document.querySelectorAll('.lead-checkbox');
+  const selected = [];
+  checkboxes.forEach(cb => {
+    if (cb.checked) {
+      const idx = parseInt(cb.dataset.index);
+      if (results[idx]) selected.push(results[idx]);
+    }
+  });
+  if (selected.length === 0) {
+    alert('No leads selected. Check at least one row to export.');
+    return;
+  }
+  const rows = [['Company Name', 'Website', 'Industry', 'Company Size', 'Location', 'Target Market', 'Description', 'Value Proposition', 'Tech Stack', 'Social Links', 'Contacts']];
+  selected.forEach(r => {
+    const d = r.data || {};
+    rows.push([
+      r.company_name || '',
+      r.url || '',
+      d.industry || '',
+      d.company_size || '',
+      d.location || '',
+      d.target_market || '',
+      d.company_description || '',
+      d.value_proposition || '',
+      (d.tech_stack || []).join('; '),
+      Object.entries(d.social_links || {}).map(([k,v]) => `${k}: ${v}`).join('; '),
+      (d.key_contacts || []).map(c => `${c.name || ''} (${c.title || ''}) ${c.email || ''}`.trim()).join('; '),
+    ]);
+  });
+  const csv = rows.map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `selected_leads_${selected.length}.csv`;
+  a.click();
+}
+
+// Select All toggle
+document.addEventListener('change', function(e) {
+  if (e.target && e.target.id === 'selectAllLeads') {
+    document.querySelectorAll('.lead-checkbox').forEach(cb => {
+      cb.checked = e.target.checked;
+    });
+  }
+});
 </script>
 </body>
 </html>
