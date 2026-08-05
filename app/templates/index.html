@@ -788,9 +788,12 @@ batchBtn.addEventListener('click', async () => {
           </div>
         `;
 
-        // Table of results
+        // Table of results with search filter
         batchHtml += `
-          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 20px;">
+          <div style="margin-bottom: 12px;">
+            <input type="text" id="batchSearchFilter" placeholder="Filter by company, industry, or location..." style="width: 100%; padding: 10px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 0.85rem;" oninput="filterBatchResults()">
+          </div>
+          <table id="batchResultsTable" style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 20px;">
             <thead>
               <tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);">
                 <th style="padding: 8px; width: 40px;"><input type="checkbox" id="selectAllLeads" checked style="cursor: pointer; width: 16px; height: 16px; accent-color: var(--accent);"></th>
@@ -868,6 +871,18 @@ batchBtn.addEventListener('click', async () => {
   batchBtn.textContent = 'Process Batch';
   batchBtn.style.opacity = '1';
 });
+
+// Filter batch results by company, industry, or location
+function filterBatchResults() {
+  const filter = document.getElementById('batchSearchFilter').value.toLowerCase();
+  const table = document.getElementById('batchResultsTable');
+  if (!table) return;
+  const rows = table.querySelectorAll('tbody tr');
+  rows.forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = text.includes(filter) ? '' : 'none';
+  });
+}
 
 function exportBatchCSV(results) {
   const rows = [['Company Name', 'Website', 'Industry', 'Company Size', 'Location', 'Target Market', 'Description', 'Value Proposition', 'Tech Stack', 'Social Links', 'Contacts']];
