@@ -240,16 +240,37 @@ async def scrape_website(url: str, max_chars: int = 8000) -> dict:
     if len(full_text) > max_chars:
         full_text = full_text[:max_chars]
 
-    # Social links
+    # Social links — check <a> tags, <link> tags, and meta tags
     social_links = {}
+    # Check all <a> tags
     for a in soup.find_all("a", href=True):
         href = a["href"]
         for domain, name in SOCIAL_DOMAINS.items():
             if domain in href and name not in social_links:
                 social_links[name] = href
+    # Also check <link> tags (some sites use these for social profiles)
+    for link in soup.find_all("link", href=True):
+        href = link["href"]
+        for domain, name in SOCIAL_DOMAINS.items():
+            if domain in href and name not in social_links:
+                social_links[name] = href
+    # Also search raw HTML for social URLs (catches JS-rendered or data-attr links)
+    for domain, name in SOCIAL_DOMAINS.items():
+        if name not in social_links:
+            pattern = rf'https?://(?:www\.)?{re.escape(domain)}/[^\s"\'<>]+'
+            match = re.search(pattern, html)
+            if match:
+                social_links[name] = match.group()
 
-    # Email addresses
-    emails = list(set(re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+", full_text)))
+    # Email addresses — search both cleaned text AND raw HTML
+    emails = set(re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+", full_text))
+    # Also search raw HTML for mailto: links
+    for mailto in soup.find_all("a", href=True):
+        if mailto["href"].startswith("mailto:"):
+            email = mailto["href"].replace("mailto:", "").split("?")[0].strip()
+            if email and "@" in email:
+                emails.add(email)
+    emails = list(emails)
     # Filter out obvious non-contact emails
     emails = [e for e in emails if not any(x in e.lower() for x in ["example.com", "sentry", "wixpress", "your-domain"])]
 
