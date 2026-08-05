@@ -440,6 +440,7 @@ async def enrich_company(request: Request):
     body = await request.json()
     company_name = body.get("company_name", "").strip()
     url = body.get("url", "").strip()
+    force_refresh = body.get("force_refresh", False)
 
     if not url:
         return JSONResponse(
@@ -451,11 +452,12 @@ async def enrich_company(request: Request):
     if not url.startswith("http"):
         url = "https://" + url
 
-    # Check cache first
-    cached = get_cached(url)
-    if cached:
-        cached["cached"] = True
-        return JSONResponse(cached)
+    # Check cache first (unless force_refresh is requested)
+    if not force_refresh:
+        cached = get_cached(url)
+        if cached:
+            cached["cached"] = True
+            return JSONResponse(cached)
 
     start_time = time.time()
 

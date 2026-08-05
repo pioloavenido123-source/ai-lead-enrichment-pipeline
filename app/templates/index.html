@@ -550,6 +550,7 @@ function renderResult(result) {
       <div class="result-actions">
         <button class="btn-secondary" onclick="exportCSV()">Export as CSV</button>
         <button class="btn-secondary" onclick="exportJSON()">Export as JSON</button>
+        <button class="btn-secondary" onclick="reenrichCompany()">Re-enrich (Fresh)</button>
       </div>
     </div>
   `;
@@ -652,6 +653,50 @@ form.addEventListener('submit', async (e) => {
   submitBtn.disabled = false;
   submitBtn.textContent = 'Enrich';
 });
+
+// Re-enrich with fresh data (bypass cache)
+async function reenrichCompany() {
+  if (!currentResult) return;
+  const submitBtn = document.getElementById('submitBtn');
+  const loadingBox = document.getElementById('loading');
+  const resultsBox = document.getElementById('results');
+  const errorBox = document.getElementById('error');
+
+  loadingBox.style.display = 'block';
+  resultsBox.innerHTML = '';
+  errorBox.innerHTML = '';
+
+  ['step1','step2','step3','step4'].forEach(id => {
+    const el = document.getElementById(id);
+    el.className = 'step';
+  });
+  animateSteps();
+
+  try {
+    const resp = await fetch('/api/enrich', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company_name: currentResult.company_name,
+        url: currentResult.url,
+        force_refresh: true
+      }),
+    });
+    const data = await resp.json();
+    loadingBox.style.display = 'none';
+
+    if (!resp.ok) {
+      errorBox.innerHTML = `<div class="error-card">${escapeHtml(data.error || 'Something went wrong')}</div>`;
+    } else {
+      currentResult = data;
+      resultsBox.innerHTML = renderResult(data);
+      loadHistory();
+    }
+  } catch (err) {
+    loadingBox.style.display = 'none';
+    errorBox.innerHTML = `<div class="error-card">Network error: ${escapeHtml(err.message)}</div>`;
+  }
+}
 
 // Load history on page load
 loadHistory();
