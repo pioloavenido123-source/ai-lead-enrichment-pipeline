@@ -550,6 +550,7 @@ function renderResult(result) {
       <div class="result-actions">
         <button class="btn-secondary" onclick="exportCSV()">Export as CSV</button>
         <button class="btn-secondary" onclick="exportJSON()">Export as JSON</button>
+        <button class="btn-secondary" onclick="copyResults()">Copy to Clipboard</button>
         <button class="btn-secondary" onclick="reenrichCompany()">Re-enrich (Fresh)</button>
       </div>
     </div>
@@ -653,6 +654,29 @@ form.addEventListener('submit', async (e) => {
   submitBtn.disabled = false;
   submitBtn.textContent = 'Enrich';
 });
+
+// Copy enrichment results to clipboard
+function copyResults() {
+  if (!currentResult) return;
+  const d = currentResult.data || {};
+  const text = `Company: ${currentResult.company_name}
+URL: ${currentResult.url}
+Industry: ${d.industry || 'N/A'}
+Size: ${d.company_size || 'N/A'}
+Location: ${d.location || 'N/A'}
+Target Market: ${d.target_market || 'N/A'}
+Description: ${d.company_description || 'N/A'}
+Value Proposition: ${d.value_proposition || 'N/A'}
+Tech Stack: ${(d.tech_stack || []).join(', ') || 'N/A'}
+Social Links: ${Object.entries(d.social_links || {}).map(([k,v]) => k + ': ' + v).join('; ') || 'N/A'}
+Contacts: ${(d.key_contacts || []).map(c => c.name + ' (' + c.title + ')' + (c.email ? ' ' + c.email : '')).join('; ') || 'N/A'}`;
+
+  navigator.clipboard.writeText(text).then(() => {
+    alert('Results copied to clipboard!');
+  }).catch(() => {
+    alert('Could not copy to clipboard. Try exporting as CSV instead.');
+  });
+}
 
 // Re-enrich with fresh data (bypass cache)
 async function reenrichCompany() {
